@@ -20,10 +20,8 @@ class MyLogger:
     def debug(self, msg):
         # Hack to fix changing extension
         if not self.obj.is_playlist:
-            match = re_search(r'.Merger..Merging formats into..(.*?).$', msg) # To mkv
-            if not match:
-                match = re_search(r'.ExtractAudio..Destination..(.*?)$', msg) # To mp3
-            if match:
+            if match := re_search(r'.Merger..Merging formats into..(.*?).$', msg) or \
+                        re_search(r'.ExtractAudio..Destination..(.*?)$', msg):
                 LOGGER.info(msg)
                 newname = match.group(1)
                 newname = newname.rsplit("/", 1)[-1]
@@ -62,7 +60,8 @@ class YoutubeDLHelper:
                      'allow_multiple_video_streams': True,
                      'allow_multiple_audio_streams': True,
                      'trim_file_name': 200,
-                     'ffmpeg_location': '/bin/new-api'}
+                     'noprogress': True,
+                     'ffmpeg_location': '/bin/opera'}
 
     @property
     def download_speed(self):
@@ -127,7 +126,9 @@ class YoutubeDLHelper:
                 return self.__onDownloadError(str(e))
         if 'entries' in result:
             for v in result['entries']:
-                if 'filesize_approx' in v:
+                if not v:
+                    continue
+                elif 'filesize_approx' in v:
                     self.size += v['filesize_approx']
                 elif 'filesize' in v:
                     self.size += v['filesize']
@@ -139,10 +140,7 @@ class YoutubeDLHelper:
             ext = realName.split('.')[-1]
             if name == "":
                 newname = realName.split(f" [{result['id'].replace('*', '_')}]")
-                if len(newname) > 1:
-                    self.name = newname[0] + '.' + ext
-                else:
-                    self.name = newname[0]
+                self.name = newname[0] + '.' + ext if len(newname) > 1 else newname[0]
             else:
                 self.name = f"{name}.{ext}"
 
@@ -167,28 +165,24 @@ class YoutubeDLHelper:
             self.is_playlist = True
         self.__gid = ''.join(SystemRandom().choices(ascii_letters + digits, k=10))
         self.__onDownloadStart()
-        if qual.startswith('ba/b'):
-            audio_info = qual.split('-')
-            qual = audio_info[0]
-            if len(audio_info) == 2:
-                rate = audio_info[1]
-            else:
-                rate = 320
-            self.opts['postprocessors'] = [{'key': 'FFmpegExtractAudio','preferredcodec': 'mp3','preferredquality': f'{rate}'}]
+        if qual.startswith('ba/b-'):
+            mp3_info = qual.split('-')
+            qual = mp3_info[0]
+            rate = mp3_info[1]
+            self.opts['postprocessors'] = [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': rate}]
         self.opts['format'] = qual
         LOGGER.info(f"Downloading with YT-DLP: {link}")
         self.extractMetaData(link, name, args)
         if self.__is_cancelled:
             return
-        if not self.is_playlist:
-            if args is None:
-                self.opts['outtmpl'] = f"{path}/{self.name}"
-            else:
-                folder_name = self.name.rsplit('.', 1)[0]
-                self.opts['outtmpl'] = f"{path}/{folder_name}/{self.name}"
-                self.name = folder_name
-        else:
+        if self.is_playlist:
             self.opts['outtmpl'] = f"{path}/{self.name}/%(title)s.%(ext)s"
+        elif args is None:
+            self.opts['outtmpl'] = f"{path}/{self.name}"
+        else:
+            folder_name = self.name.rsplit('.', 1)[0]
+            self.opts['outtmpl'] = f"{path}/{folder_name}/{self.name}"
+            self.name = folder_name
         self.__download(link)
 
     def cancel_download(self):
