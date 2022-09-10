@@ -3,6 +3,7 @@ from base64 import b16encode, b32decode
 from bencoding import bencode, bdecode
 from time import sleep, time
 from re import search as re_search
+from os import remove
 
 from bot import download_dict, download_dict_lock, BASE_URL, get_client, STOP_DUPLICATE, TORRENT_TIMEOUT, LOGGER
 from bot.helper.mirror_utils.status_utils.qbit_download_status import QbDownloadStatus
@@ -26,12 +27,10 @@ class QbDownloader:
         self.__uploaded = False
         self.__rechecked = False
         self.__stopDup_check = False
-        self.__select = False
         self.__periodic = None
 
-    def add_qb_torrent(self, link, path, select, ratio, seed_time):
+    def add_qb_torrent(self, link, path, ratio, seed_time):
         self.__path = path
-        self.__select = select
         try:
             if link.startswith('magnet:'):
                 self.ext_hash = _get_hash_magnet(link)
@@ -54,12 +53,18 @@ class QbDownloader:
                         if len(tor_info) > 0:
                             break
                         elif time() - self.__stalled_time >= 30:
-                            msg = "Not a torrent. If something wrong please report."
+                            msg = "Not a torrent. If it's a torrent then report!"
                             self.client.torrents_delete(torrent_hashes=self.ext_hash, delete_files=True)
                             sendMessage(msg, self.__listener.bot, self.__listener.message)
+                            if not link.startswith('magnet:'):
+                                remove(link)
                             return self.client.auth_log_out()
+                if not link.startswith('magnet:'):
+                    remove(link)
             else:
                 sendMessage("This is an unsupported/invalid link.", self.__listener.bot, self.__listener.message)
+                if not link.startswith('magnet:'):
+                    remove(link)
                 return self.client.auth_log_out()
             tor_info = tor_info[0]
             self.__name = tor_info.name
@@ -69,7 +74,7 @@ class QbDownloader:
             self.__listener.onDownloadStart()
             LOGGER.info(f"QbitDownload started: {self.__name} - Hash: {self.ext_hash}")
             self.__periodic = setInterval(self.POLLING_INTERVAL, self.__qb_listener)
-            if BASE_URL is not None and select:
+            if BASE_URL is not None and self.__listener.select:
                 if link.startswith('magnet:'):
                     metamsg = "Downloading Metadata, wait then you can select files. Use torrent file to avoid this wait."
                     meta = sendMessage(metamsg, self.__listener.bot, self.__listener.message)
@@ -107,7 +112,7 @@ class QbDownloader:
                     self.__onDownloadError("Dead Torrent!")
             elif tor_info.state == "downloading":
                 self.__stalled_time = time()
-                if not self.__stopDup_check and not self.__select and STOP_DUPLICATE and not self.__listener.isLeech:
+                if not self.__stopDup_check and not self.__listener.select and STOP_DUPLICATE and not self.__listener.isLeech:
                     LOGGER.info('Checking File/Folder if already in Drive')
                     qbname = tor_info.content_path.rsplit('/', 1)[-1].rsplit('.!qB', 1)[0]
                     if self.__listener.isZip:
@@ -142,7 +147,7 @@ class QbDownloader:
                 self.__uploaded = True
                 if not self.__listener.seed:
                     self.client.torrents_pause(torrent_hashes=self.ext_hash)
-                if self.__select:
+                if self.__listener.select:
                     clean_unwanted(self.__path)
                 self.__listener.onDownloadComplete()
                 if self.__listener.seed:
